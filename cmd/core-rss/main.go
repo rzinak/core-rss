@@ -70,7 +70,8 @@ func loadFeeds(folder *FeedFolder, root *tview.TreeNode) {
 		folder.Feeds[i] = &feed
 
 		feedNode := tview.NewTreeNode(feed.Title).SetReference(&feed)
-		feedNode.SetColor(tcell.ColorGreen)
+		feedNode.SetTextStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.Color(tcell.ColorValues[0x000000])))
+		feedNode.SetSelectedTextStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorGreen))
 		folderNode := findNode(root, func(node *tview.TreeNode) bool {
 			return node.GetReference() == folder
 		})
@@ -122,7 +123,7 @@ func findNode(root *tview.TreeNode, condition func(*tview.TreeNode) bool) *tview
 }
 
 func main() {
-	defaultStatusBarMsg := "?: help | q: quit | Tab: switch focus | h/j/k/l: navigate"
+	defaultStatusBarMsg := "?: help | q: quit | Tab: switch focus | j/k: navigate"
 
 	logFile, err := os.OpenFile("debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -143,6 +144,10 @@ func main() {
 	// create a tree view for folders and feeds
 	tree := tview.NewTreeView()
 	root := tview.NewTreeNode("Feeds").SetColor(tcell.ColorGreen)
+
+	root.SetTextStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.Color(tcell.ColorValues[0x000000])))
+	root.SetSelectedTextStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorGreen))
+
 	tree.SetRoot(root).SetCurrentNode(root)
 	tree.SetBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
 	tree.SetBorder(true)
@@ -158,7 +163,8 @@ func main() {
 	contentView.SetWrap(true)
 	contentView.SetBorder(true)
 	contentView.SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen))
-	contentView.SetTitleColor(tcell.Color(tcell.ColorValues[0xFFFFFF]))
+	contentView.SetTitleColor(tcell.ColorGreen)
+	contentView.SetTitle("Core RSS")
 
 	// status bar
 	statusBar := tview.NewTextView()
@@ -184,7 +190,7 @@ func main() {
 	appFlex.AddItem(statusBar, 1, 1, false)
 
 	helpModal := tview.NewModal()
-	helpModal.SetText("Press 'q' to quit\nPress '?' to close this help")
+	helpModal.SetText("Press 'q' to quit\nPress 'Tab' to switch focus inside the application\nNavigate using j/k\nPress 'Enter' to close this help (when focused)")
 	helpModal.AddButtons([]string{"Close"})
 	helpModal.SetBorder(true)
 	helpModal.SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen))
@@ -192,11 +198,16 @@ func main() {
 	helpModal.SetTextColor(tcell.Color(tcell.ColorValues[0xFFFFFF]))
 	helpModal.SetTitle("Help")
 	helpModal.SetTitleColor(tcell.ColorGreen)
+	helpModal.SetButtonTextColor(tcell.ColorGreen)
+	helpModal.SetButtonBackgroundColor(tcell.ColorBlack)
 
 	// add a default folder
 	defaultFolder := &FeedFolder{Name: "Default"}
 	defaultFolderNode := tview.NewTreeNode(defaultFolder.Name).SetReference(defaultFolder)
 	defaultFolderNode.SetColor(tcell.ColorGreen)
+	defaultFolderNode.SetTextStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.Color(tcell.ColorValues[0x000000])))
+	defaultFolderNode.SetSelectedTextStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorGreen))
+
 	root.AddChild(defaultFolderNode)
 
 	loadFeeds(defaultFolder, root)
@@ -206,15 +217,22 @@ func main() {
 		switch v := reference.(type) {
 		case Item:
 			// handle item selection
-			plainText, err := html2text.FromString(v.Content, html2text.Options{PrettyTables: true})
-			if err != nil {
-				plainText = fmt.Sprintf("error converting html to text: %v: ", err)
+			var content string
+			var err error
+			if v.Content != "" {
+				content, err = html2text.FromString(v.Content, html2text.Options{PrettyTables: true})
+			} else {
+				content, err = html2text.FromString(v.Description, html2text.Options{PrettyTables: true})
 			}
-			log("plainText: %s", plainText)
-			log("v.Content: %s", v.Content)
+
+			if err != nil {
+				content = "error parsing content: " + err.Error()
+			}
+
 			contentView.Clear()
-			fmt.Fprintf(contentView, "[yellow]Published:[~] %s\n\n%s", v.PubDate, plainText)
+			fmt.Fprintf(contentView, "[yellow]Published: %s\n\n%s", v.PubDate, content)
 			contentView.SetTitle(v.Title)
+			contentView.SetTitleColor(tcell.ColorYellow)
 			app.SetFocus(contentView)
 		case *Feed:
 			if len(node.GetChildren()) > 0 {
@@ -242,7 +260,8 @@ func main() {
 						for _, item := range feedData.Items {
 							itemCopy := item
 							feedItemNode := tview.NewTreeNode(itemCopy.Title).SetReference(itemCopy)
-							feedItemNode.SetColor(tcell.ColorGreen)
+							feedItemNode.SetTextStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.Color(tcell.ColorValues[0x000000])))
+							feedItemNode.SetSelectedTextStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorGreen))
 							node.AddChild(feedItemNode)
 						}
 						statusBar.SetText(fmt.Sprintf("loaded %d items for feed: %s", len(feedData.Items), v.Title))
@@ -264,6 +283,7 @@ func main() {
 				// expand
 				for _, feed := range v.Feeds {
 					feedNode := tview.NewTreeNode(feed.Title).SetReference(feed)
+					feedNode.SetColor(tcell.ColorGreen)
 					node.AddChild(feedNode)
 				}
 			}
@@ -334,6 +354,10 @@ func main() {
 	addFeedForm.SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen))
 	addFeedForm.SetTitleColor(tcell.ColorGreen)
 	addFeedForm.SetTitle("Add a new feed")
+	addFeedForm.SetFieldBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
+	addFeedForm.SetFieldTextColor(tcell.ColorGreen)
+	addFeedForm.SetButtonTextColor(tcell.ColorGreen)
+	addFeedForm.SetButtonBackgroundColor(tcell.ColorBlack)
 
 	// flex container to center the form
 	formFlex.AddItem(nil, 0, 1, false)
@@ -343,6 +367,15 @@ func main() {
 		AddItem(nil, 0, 1, false), 0, 1, true).
 		AddItem(nil, 0, 1, false)
 
+	addFeedForm.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEsc {
+			pages.HidePage("addFeed")
+			app.SetFocus(tree)
+			return nil
+		}
+		return event
+	})
+
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if _, isInputField := app.GetFocus().(*tview.InputField); isInputField {
 			return event
@@ -351,7 +384,7 @@ func main() {
 		case 'a':
 			pages.ShowPage("addFeed")
 			addFeedForm.GetFormItem(0).(*tview.InputField).SetText("")
-			app.SetFocus(addFeedForm)
+			app.SetFocus(addFeedForm.GetFormItem(0).(*tview.InputField))
 			return nil
 		case 'q':
 			app.Stop()
