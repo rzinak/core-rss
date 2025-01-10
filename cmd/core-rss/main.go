@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/jaytaylor/html2text"
@@ -21,6 +25,7 @@ type Item struct {
 
 type Feed struct {
 	Title string `xml:"channel>title"`
+	URL   string
 	Items []Item `xml:"channel>item"`
 }
 
@@ -29,7 +34,96 @@ type FeedFolder struct {
 	Feeds []*Feed
 }
 
+type FeedData struct {
+	Feeds []struct {
+		Title string `json:"title"`
+		URL   string `json:"url"`
+	} `json:"feeds"`
+}
+
+func loadFeeds(folder *FeedFolder, root *tview.TreeNode) {
+	var data FeedData
+	file, err := os.Open("feeds.json")
+	if err != nil {
+		if os.IsNotExist(err) {
+			folder.Feeds = []*Feed{}
+			return
+		}
+		fmt.Println("error loading feeds: ", err)
+		return
+	}
+
+	defer file.Close()
+	err = json.NewDecoder(file).Decode(&data)
+	if err != nil {
+		fmt.Println("error parsing feeds: ", err)
+		return
+	}
+
+	folder.Feeds = make([]*Feed, len(data.Feeds))
+	for i, f := range data.Feeds {
+		feed := Feed{
+			Title: f.Title,
+			URL:   f.URL,
+		}
+
+		folder.Feeds[i] = &feed
+
+		feedNode := tview.NewTreeNode(feed.Title).SetReference(&feed)
+		feedNode.SetColor(tcell.ColorGreen)
+		folderNode := findNode(root, func(node *tview.TreeNode) bool {
+			return node.GetReference() == folder
+		})
+		if folderNode != nil {
+			folderNode.AddChild(feedNode)
+		}
+	}
+}
+
+func saveFeeds(folder *FeedFolder) {
+	var data FeedData
+	data.Feeds = make([]struct {
+		Title string `json:"title"`
+		URL   string `json:"url"`
+	}, len(folder.Feeds))
+	for i, feed := range folder.Feeds {
+		data.Feeds[i] = struct {
+			Title string `json:"title"`
+			URL   string `json:"url"`
+		}{
+			Title: feed.Title,
+			URL:   feed.URL,
+		}
+	}
+	file, err := os.Create("feeds.json")
+	if err != nil {
+		fmt.Println("error saving feeds: ", err)
+		return
+	}
+	defer file.Close()
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "    ")
+	err = encoder.Encode(&data)
+	if err != nil {
+		fmt.Println("error encoding feeds: ", err)
+	}
+}
+
+func findNode(root *tview.TreeNode, condition func(*tview.TreeNode) bool) *tview.TreeNode {
+	if condition(root) {
+		return root
+	}
+	for _, child := range root.GetChildren() {
+		if found := findNode(child, condition); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
 func main() {
+	defaultStatusBarMsg := "?: help | q: quit | Tab: switch focus | h/j/k/l: navigate"
+
 	logFile, err := os.OpenFile("debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		panic(err)
@@ -50,6 +144,11 @@ func main() {
 	tree := tview.NewTreeView()
 	root := tview.NewTreeNode("Feeds").SetColor(tcell.ColorGreen)
 	tree.SetRoot(root).SetCurrentNode(root)
+	tree.SetBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
+	tree.SetBorder(true)
+	tree.SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen))
+	tree.SetTitleColor(tcell.ColorGreen)
+	tree.SetTitle("Core RSS")
 
 	// create a textview to display the content of the selected item
 	contentView := tview.NewTextView()
@@ -64,7 +163,7 @@ func main() {
 	// status bar
 	statusBar := tview.NewTextView()
 	statusBar.SetTextAlign(tview.AlignLeft)
-	statusBar.SetText("?: help | q: quit | Tab: switch focus | h/j/k/l: navigate")
+	statusBar.SetText(defaultStatusBarMsg)
 	statusBar.SetBackgroundColor(tcell.Color(tcell.ColorValues[0x333333]))
 	statusBar.SetTextColor(tcell.Color(tcell.ColorValues[0xFFFFFF]))
 
@@ -79,8 +178,6 @@ func main() {
 	appFlex.SetDirection(tview.FlexRow)
 
 	pages := tview.NewPages().AddPage("main", appFlex, true, true)
-
-	// here i add the addFeed page with visible set to false
 	pages.AddPage("addFeed", formFlex, true, false) // initially hidden
 
 	appFlex.AddItem(mainFlex, 0, 1, true)
@@ -93,16 +190,16 @@ func main() {
 	helpModal.SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen))
 	helpModal.SetBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
 	helpModal.SetTextColor(tcell.Color(tcell.ColorValues[0xFFFFFF]))
-
-	// grid := tview.NewGrid().
-	// 	SetRows(0).
-	// 	SetColumns(0).
-	// 	AddItem(appFlex, 0, 0, 1, 1, 0, 0, true)
+	helpModal.SetTitle("Help")
+	helpModal.SetTitleColor(tcell.ColorGreen)
 
 	// add a default folder
 	defaultFolder := &FeedFolder{Name: "Default"}
 	defaultFolderNode := tview.NewTreeNode(defaultFolder.Name).SetReference(defaultFolder)
+	defaultFolderNode.SetColor(tcell.ColorGreen)
 	root.AddChild(defaultFolderNode)
+
+	loadFeeds(defaultFolder, root)
 
 	tree.SetSelectedFunc(func(node *tview.TreeNode) {
 		reference := node.GetReference()
@@ -113,20 +210,51 @@ func main() {
 			if err != nil {
 				plainText = fmt.Sprintf("error converting html to text: %v: ", err)
 			}
+			log("plainText: %s", plainText)
+			log("v.Content: %s", v.Content)
 			contentView.Clear()
 			fmt.Fprintf(contentView, "[yellow]Published:[~] %s\n\n%s", v.PubDate, plainText)
 			contentView.SetTitle(v.Title)
 			app.SetFocus(contentView)
 		case *Feed:
-			// handle feed selection (toggle feed items)
 			if len(node.GetChildren()) > 0 {
-				node.SetChildren(nil) // collapse here
+				node.SetChildren(nil)
 			} else {
-				// expand
-				for _, item := range v.Items {
-					item := item
-					node.AddChild(tview.NewTreeNode(item.Title).SetReference(item))
-				}
+				go func() {
+					resp, err := http.Get(v.URL)
+					if err != nil {
+						log("error fetching feed items: %v", err)
+						return
+					}
+					defer resp.Body.Close()
+
+					body, err := io.ReadAll(resp.Body)
+					resp.Body = io.NopCloser(bytes.NewReader(body))
+
+					var feedData Feed
+					err = xml.NewDecoder(resp.Body).Decode(&feedData)
+					if err != nil {
+						log("error parsing feed items: %v", err)
+						return
+					}
+
+					app.QueueUpdateDraw(func() {
+						for _, item := range feedData.Items {
+							itemCopy := item
+							feedItemNode := tview.NewTreeNode(itemCopy.Title).SetReference(itemCopy)
+							feedItemNode.SetColor(tcell.ColorGreen)
+							node.AddChild(feedItemNode)
+						}
+						statusBar.SetText(fmt.Sprintf("loaded %d items for feed: %s", len(feedData.Items), v.Title))
+					})
+
+					go func() {
+						time.Sleep(5 * time.Second)
+						app.QueueUpdateDraw(func() {
+							statusBar.SetText(defaultStatusBarMsg)
+						})
+					}()
+				}()
 			}
 		case *FeedFolder:
 			// handle folder selection (toggle feeds)
@@ -159,9 +287,11 @@ func main() {
 				return
 			}
 			defer resp.Body.Close()
-
 			var feed Feed
-			if err := xml.NewDecoder(resp.Body).Decode(&feed); err != nil {
+			feed.URL = feedUrl
+			err = xml.NewDecoder(resp.Body).Decode(&feed)
+
+			if err != nil {
 				log("error parsing feed: %v", err)
 				app.QueueUpdateDraw(func() {
 					statusBar.SetText(fmt.Sprintf("error parsing feed: %v", err))
@@ -172,21 +302,17 @@ func main() {
 			log("feed title :%s", feed.Title)
 			log("number of items: %d", len(feed.Items))
 
-			// update ui on the main thread
 			app.QueueUpdateDraw(func() {
+				folder.Feeds = append(folder.Feeds, &feed)
 				feedNode := tview.NewTreeNode(feed.Title).SetReference(&feed)
-				root.AddChild(feedNode)
-
-				//add feed items under the folder node
-				for _, item := range feed.Items {
-					item := item
-					feedNode.AddChild(tview.NewTreeNode(item.Title).SetReference(item))
+				feedNode.SetColor(tcell.ColorGreen)
+				folderNode := findNode(root, func(node *tview.TreeNode) bool {
+					return node.GetReference() == folder
+				})
+				if folderNode != nil {
+					folderNode.AddChild(feedNode)
 				}
-
-				// clear input after adding the feed
-				addFeedForm.GetFormItem(0).(*tview.InputField).SetText("")
-
-				// update status bar
+				saveFeeds(folder)
 				statusBar.SetText(fmt.Sprintf("added feed: %s (%d items)", feed.Title, len(feed.Items)))
 			})
 		}()
@@ -200,17 +326,14 @@ func main() {
 		}
 		pages.HidePage("addFeed")
 	})
-
-	tree.SetChangedFunc(func(node *tview.TreeNode) {
-		reference := node.GetReference()
-		if feed, ok := reference.(*Feed); ok {
-			// display the feed title in the content view
-			contentView.Clear()
-			fmt.Fprintf(contentView, "[yellow]Feed Title:[~] %s\n\n", feed.Title)
-			contentView.SetTitle(feed.Title)
-			app.SetFocus(contentView)
-		}
+	addFeedForm.AddButton("Cancel", func() {
+		pages.HidePage("addFeed")
 	})
+	addFeedForm.SetBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
+	addFeedForm.SetBorder(true)
+	addFeedForm.SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen))
+	addFeedForm.SetTitleColor(tcell.ColorGreen)
+	addFeedForm.SetTitle("Add a new feed")
 
 	// flex container to center the form
 	formFlex.AddItem(nil, 0, 1, false)
@@ -220,10 +343,10 @@ func main() {
 		AddItem(nil, 0, 1, false), 0, 1, true).
 		AddItem(nil, 0, 1, false)
 
-	// add form to a page
-	// pages.AddPage("addFeed", formFlex, true, true)
-
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if _, isInputField := app.GetFocus().(*tview.InputField); isInputField {
+			return event
+		}
 		switch event.Rune() {
 		case 'a':
 			pages.ShowPage("addFeed")
@@ -252,24 +375,6 @@ func main() {
 		pages.RemovePage("help")
 		app.SetFocus(appFlex)
 	})
-
-	// list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-	// 	switch event.Rune() {
-	// 	case 'j':
-	// 		currentIndex := list.GetCurrentItem()
-	// 		if currentIndex < list.GetItemCount()-1 {
-	// 			list.SetCurrentItem(currentIndex + 1)
-	// 		}
-	// 		return nil
-	// 	case 'k':
-	// 		currentIndex := list.GetCurrentItem()
-	// 		if currentIndex > 0 {
-	// 			list.SetCurrentItem(currentIndex - 1)
-	// 		}
-	// 		return nil
-	// 	}
-	// 	return event
-	// })
 
 	contentView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Rune() {
