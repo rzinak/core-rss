@@ -260,6 +260,13 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 					return nil
 				}
 			}
+			statusBar.SetText("No feed selected to remove. Please select a feed")
+			time.AfterFunc(2*time.Second, func() {
+				app.QueueUpdateDraw(func() {
+					statusBar.SetText(defaultStatusBarMsg)
+				})
+			})
+			return nil
 		case rune(tcell.KeyTab):
 			if app.GetFocus() == tree {
 				app.SetFocus(contentView)
