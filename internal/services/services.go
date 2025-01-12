@@ -3,12 +3,33 @@ package services
 import (
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"github.com/rzinak/core-rss/internal/models"
+	"github.com/rzinak/core-rss/pkg/utils"
+	"golang.org/x/net/html/charset"
+	"io"
 	"net/http"
 	"os"
 )
 
+func logToFile(message string) {
+	f, err := os.OpenFile("log.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Println("Error opening log file:", err)
+		return
+	}
+	defer f.Close()
+
+	_, err = fmt.Fprintln(f, message)
+	if err != nil {
+		fmt.Println("Error writing to log file:", err)
+	}
+}
+
 func LoadFeeds(folder *models.FeedFolder) error {
+	logger := utils.GetLogger()
+	defer logger.Close()
+
 	file, err := os.Open("feeds.json")
 	if err != nil {
 		return err
@@ -67,25 +88,34 @@ func SaveFeeds(folder *models.FeedFolder) error {
 	return encoder.Encode(&data)
 }
 
-func AddFeedToFolder(folder *models.FeedFolder, feedUrl string) (*models.Feed, error) {
+func AddFeedToFolder(folder *models.FeedFolder, feedUrl string) (*models.Feed, string, error) {
 	resp, err := http.Get(feedUrl)
 	if err != nil {
-		return nil, err
+		return nil, "Failed to fetch RSS feed", err
 	}
 	defer resp.Body.Close()
 
+	decoder := xml.NewDecoder(resp.Body)
+
+	decoder.CharsetReader = func(charsetLabel string, input io.Reader) (io.Reader, error) {
+		return charset.NewReaderLabel(charsetLabel, input)
+	}
+
 	var feed models.Feed
-	err = xml.NewDecoder(resp.Body).Decode(&feed)
+
+	logToFile(fmt.Sprintf("AddFeedToFolder | feed title: %s", feed.Title))
+	err = decoder.Decode(&feed)
 	if err != nil {
-		return nil, err
+		logToFile(fmt.Sprintf("error parsing:"))
+		logToFile(fmt.Sprintf("%v", err))
+		return nil, "Failed to parse RSS feed", err
 	}
 	feed.URL = feedUrl
-
 	folder.Feeds = append(folder.Feeds, &feed)
 	err = SaveFeeds(folder)
 	if err != nil {
-		return nil, err
+		return nil, "Failed to save feed", err
 	}
 
-	return &feed, nil
+	return &feed, fmt.Sprintf("Feed %s added successfully!", feed.Title), nil
 }

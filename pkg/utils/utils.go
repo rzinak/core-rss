@@ -36,6 +36,13 @@ func (l *Logger) Log(format string, args ...interface{}) {
 	l.file.Sync()
 }
 
+// another one just to be sure
+func (l *Logger) Flush() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.file.Sync()
+}
+
 func (l *Logger) Close() {
 	if l.file != nil {
 		l.file.Close()

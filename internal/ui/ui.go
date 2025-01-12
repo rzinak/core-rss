@@ -9,12 +9,32 @@ import (
 	"github.com/rivo/tview"
 	"github.com/rzinak/core-rss/internal/models"
 	"github.com/rzinak/core-rss/internal/services"
+	"github.com/rzinak/core-rss/pkg/utils"
+	"golang.org/x/net/html/charset"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
+func logToFile(message string) {
+	f, err := os.OpenFile("log.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Println("Error opening log file:", err)
+		return
+	}
+	defer f.Close()
+
+	_, err = fmt.Fprintln(f, message)
+	if err != nil {
+		fmt.Println("Error writing to log file:", err)
+	}
+}
+
 func SetupUI(folder *models.FeedFolder) *tview.Pages {
+	logger := utils.GetLogger()
+	defer logger.Close()
+
 	app := tview.NewApplication()
 
 	err := services.LoadFeeds(folder)
@@ -43,7 +63,7 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 	contentView.SetTitleColor(tcell.ColorGreen)
 	contentView.SetTitle("Core RSS")
 
-	defaultStatusBarMsg := "?: help | q: quit | Tab: switch focus | j/k: navigate | a: add new feed"
+	defaultStatusBarMsg := "?: help | q: quit | Tab: switch focus | j/k: navigate | a: add new feed | d: remove a feed"
 
 	statusBar := tview.NewTextView()
 	statusBar.SetTextAlign(tview.AlignLeft)
@@ -86,7 +106,7 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 	confirmModal.SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen))
 	confirmModal.SetBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
 	confirmModal.SetTextColor(tcell.Color(tcell.ColorValues[0xFFFFFF]))
-	confirmModal.SetTitle("Confirm Removal")
+	confirmModal.SetTitle("Remove feed")
 	confirmModal.SetTitleColor(tcell.ColorGreen)
 	confirmModal.SetButtonTextColor(tcell.ColorGreen)
 	confirmModal.SetButtonBackgroundColor(tcell.ColorBlack)
@@ -100,6 +120,15 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 	root.AddChild(folderNode)
 
 	services.LoadFeeds(folder)
+
+	resetStatusBarMsg := func(secondsToDisappear int) {
+		go func() {
+			time.Sleep(time.Duration(secondsToDisappear) * time.Second)
+			app.QueueUpdateDraw(func() {
+				statusBar.SetText(defaultStatusBarMsg)
+			})
+		}()
+	}
 
 	tree.SetSelectedFunc(func(node *tview.TreeNode) {
 		reference := node.GetReference()
@@ -116,6 +145,7 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 
 			if err != nil {
 				content = "error parsing content: " + err.Error()
+				statusBar.SetText(content)
 			}
 
 			contentView.Clear()
@@ -137,11 +167,22 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 					body, err := io.ReadAll(resp.Body)
 					resp.Body = io.NopCloser(bytes.NewReader(body))
 
+					decoder := xml.NewDecoder(resp.Body)
+
+					decoder.CharsetReader = func(charsetLabel string, input io.Reader) (io.Reader, error) {
+						logToFile(fmt.Sprintf("charSetLabel: %s", charsetLabel))
+						return charset.NewReaderLabel(charsetLabel, input)
+					}
+
 					var feedData models.Feed
-					err = xml.NewDecoder(resp.Body).Decode(&feedData)
+					// logToFile(fmt.Sprintf("feedData: %s", feedData))
+
+					err = decoder.Decode(&feedData)
 					if err != nil {
 						return
 					}
+
+					// logToFile(fmt.Sprintf("&feedData: %s", &feedData))
 
 					app.QueueUpdateDraw(func() {
 						for _, item := range feedData.Items {
@@ -154,12 +195,7 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 						statusBar.SetText(fmt.Sprintf("loaded %d items for feed: %s", len(feedData.Items), v.Title))
 					})
 
-					go func() {
-						time.Sleep(5 * time.Second)
-						app.QueueUpdateDraw(func() {
-							statusBar.SetText(defaultStatusBarMsg)
-						})
-					}()
+					resetStatusBarMsg(5)
 				}()
 			}
 		case *models.FeedFolder:
@@ -183,29 +219,50 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 	addFeedForm.AddButton("Add", func() {
 		url := addFeedForm.GetFormItem(0).(*tview.InputField).GetText()
 		if url != "" {
-			services.AddFeedToFolder(folder, url)
+			_, message, err := services.AddFeedToFolder(folder, url)
+			if err != nil {
+				statusBar.SetText("Error: " + message)
+				resetStatusBarMsg(5)
+			} else {
+				statusBar.SetText(message)
+				resetStatusBarMsg(5)
+			}
 		}
 		pages.HidePage("addFeed")
 	})
-	addFeedForm.AddButton("Cancel", func() {
-		pages.HidePage("addFeed")
-	})
+
+	addFeedForm.SetButtonsAlign(1)
+
 	addFeedForm.SetBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
-	addFeedForm.SetBorder(true)
 	addFeedForm.SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen))
 	addFeedForm.SetTitleColor(tcell.ColorGreen)
-	addFeedForm.SetTitle("Add a new feed")
 	addFeedForm.SetFieldBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
 	addFeedForm.SetFieldTextColor(tcell.ColorGreen)
 	addFeedForm.SetButtonTextColor(tcell.ColorGreen)
 	addFeedForm.SetButtonBackgroundColor(tcell.ColorBlack)
 
+	closingTipText := tview.NewTextView().
+		SetText("Tip: Press 'ESC' to close this window")
+
+	closingTipText.SetBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
+	closingTipText.SetTextAlign(1)
+
+	addFeedFormLayout := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(addFeedForm, 0, 1, true).
+		AddItem(closingTipText, 1, 0, false)
+
+	addFeedFormLayout.SetBorder(true).
+		SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen)).
+		SetTitle("Add a new feed").
+		SetTitleColor(tcell.ColorGreen)
+
 	// flex container to center the form
 	formFlex.AddItem(nil, 0, 1, false)
 	formFlex.AddItem(tview.NewFlex().
 		AddItem(nil, 0, 1, false).
-		AddItem(addFeedForm, 0, 3, true).
-		AddItem(nil, 0, 1, false), 0, 1, true).
+		AddItem(addFeedFormLayout, 70, 1, true).
+		AddItem(nil, 0, 1, false), 8, 1, true).
 		AddItem(nil, 0, 1, false)
 
 	addFeedForm.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -254,6 +311,8 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 						}
 						pages.RemovePage("confirmRemove")
 						app.SetFocus(tree)
+
+						resetStatusBarMsg(5)
 					})
 					pages.AddPage("confirmRemove", confirmModal, true, true)
 					app.SetFocus(confirmModal)
@@ -261,11 +320,7 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 				}
 			}
 			statusBar.SetText("No feed selected to remove. Please select a feed")
-			time.AfterFunc(2*time.Second, func() {
-				app.QueueUpdateDraw(func() {
-					statusBar.SetText(defaultStatusBarMsg)
-				})
-			})
+			resetStatusBarMsg(5)
 			return nil
 		case rune(tcell.KeyTab):
 			if app.GetFocus() == tree {

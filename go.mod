@@ -12,7 +12,7 @@ require (
 	github.com/rivo/tview v0.0.0-20241227133733-17b7edb88c57 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/ssor/bom v0.0.0-20170718123548-6386211fdfcf // indirect
-	golang.org/x/net v0.25.0 // indirect
+	golang.org/x/net v0.34.0 // indirect
 	golang.org/x/sys v0.29.0 // indirect
 	golang.org/x/term v0.28.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
