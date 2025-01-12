@@ -89,6 +89,12 @@ func SaveFeeds(folder *models.FeedFolder) error {
 }
 
 func AddFeedToFolder(folder *models.FeedFolder, feedUrl string) (*models.Feed, string, error) {
+	for _, existingFeed := range folder.Feeds {
+		if existingFeed.URL == feedUrl {
+			return nil, "Feed already exists!", fmt.Errorf("feed with URL %s already exists", feedUrl)
+		}
+	}
+
 	resp, err := http.Get(feedUrl)
 	if err != nil {
 		return nil, "Failed to fetch RSS feed", err
