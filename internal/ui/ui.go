@@ -69,7 +69,7 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 	contentView.SetTitleColor(tcell.ColorGreen)
 	contentView.SetTitle("Core RSS")
 
-	defaultStatusBarMsg := "?: help | q: quit | Tab: switch focus | j/k: navigate | a: add new feed | d: remove a feed | f: add a folder"
+	defaultStatusBarMsg := "?: help | q: quit | Tab: switch focus | j/k: navigate | a: add new feed | d: remove a feed | f: add a folder | r: rename a folder"
 
 	statusBar := tview.NewTextView()
 	statusBar.SetTextAlign(tview.AlignLeft)
@@ -94,7 +94,7 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 	appFlex.AddItem(statusBar, 1, 1, false)
 
 	helpModal := tview.NewModal()
-	helpModal.SetText("Press 'q' to quit\nPress 'Tab' to switch focus inside the application\nNavigate using j/k\nPress 'Enter' to close this help (when focused)\nPress 'a' to add a new feed")
+	helpModal.SetText("Press 'q' to quit\nPress 'Tab' to switch focus inside the application\nNavigate using j/k\nPress 'Enter' to close this help (when focused)\nPress 'a' to add a new feed\nPress 'f' to add a folder\nPress 'r' to rename a folder")
 	helpModal.AddButtons([]string{"Close"})
 	helpModal.SetBorder(true)
 	helpModal.SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen))
@@ -133,8 +133,6 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 			folderNode.AddChild(feedNode)
 		}
 	}
-
-	// services.LoadFeeds(folder)
 
 	resetStatusBarMsg := func(secondsToDisappear int) {
 		go func() {
@@ -331,7 +329,10 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 	})
 
 	addFolderForm := tview.NewForm()
+	addFolderForm.SetFieldBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
+	addFolderForm.SetFieldTextColor(tcell.ColorGreen)
 	addFolderForm.AddInputField("Folder Name: ", "", 0, nil, nil)
+	addFolderForm.SetBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
 	addFolderForm.AddButton("Add", func() {
 		folderName := addFolderForm.GetFormItem(0).(*tview.InputField).GetText()
 		if folderName != "" {
@@ -364,30 +365,38 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 		app.SetFocus(tree)
 	})
 
+	folderFormTipText := tview.NewTextView()
+	folderFormTipText.SetText("Tip: Press 'ESC' to close")
+	folderFormTipText.SetTextAlign(1)
+	folderFormTipText.SetBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
+
 	folderFormLayout := tview.NewFlex().
 		SetDirection(tview.FlexRow).
-		AddItem(addFolderForm, 0, 1, true).
-		AddItem(tview.NewTextView().SetText("Tip: Press 'ESC' to close").SetTextAlign(1), 1, 0, false)
-
+		AddItem(addFolderForm, 3, 1, true).
+		AddItem(folderFormTipText, 1, 0, false)
 	folderFormLayout.SetBorder(true).
 		SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen)).
 		SetTitle("Add a new folder").
 		SetTitleColor(tcell.ColorGreen)
 
-	folderFlex := tview.NewFlex()
-	folderFlex.SetDirection(tview.FlexRow)
-	folderFlex.AddItem(nil, 0, 1, false).
-		AddItem(tview.NewFlex().
+	folderFlex := tview.NewFlex().
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
 			AddItem(nil, 0, 1, false).
-			AddItem(folderFormLayout, 70, 1, true).
-			AddItem(nil, 0, 1, false), 0, 1, true).
+			AddItem(tview.NewFlex().
+				AddItem(nil, 0, 1, false).
+				AddItem(folderFormLayout, 70, 1, true).
+				AddItem(nil, 0, 1, false),
+				6, 1, true).
+			AddItem(nil, 0, 1, false),
+			0, 1, true).
 		AddItem(nil, 0, 1, false)
 
 	pages.AddPage("addFolder", folderFlex, true, false)
 
-	addFeedForm.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+	addFolderForm.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyEsc {
-			pages.HidePage("addFeed")
+			pages.HidePage("addFolder")
 			app.SetFocus(tree)
 			return nil
 		}
@@ -454,11 +463,105 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 		app.SetFocus(tree)
 	})
 
+	showRenameFolderModal := func(folder *models.FeedFolder, node *tview.TreeNode) {
+		if pages.HasPage("renameFolder") {
+			pages.RemovePage("renameFolder")
+		}
+
+		renameForm := tview.NewForm()
+		renameForm.AddInputField("New Name: ", folder.Name, 0, nil, nil)
+		renameForm.AddButton("Rename", func() {
+			newName := renameForm.GetFormItem(0).(*tview.InputField).GetText()
+			if newName == "" {
+				statusBar.SetText("Folder name cannot be empty")
+				resetStatusBarMsg(5)
+				return
+			}
+
+			for _, f := range folderData.Folders {
+				if f.Name == newName && &f != folder {
+					statusBar.SetText("Folder name already exists")
+					resetStatusBarMsg(5)
+					return
+				}
+			}
+
+			folder.Name = newName
+			node.SetText(newName)
+			services.SaveFolders(folderData)
+			pages.HidePage("renameFolder")
+			app.SetFocus(tree)
+			statusBar.SetText(fmt.Sprintf("Folder renamed to '%s'", newName))
+			resetStatusBarMsg(5)
+		})
+
+		renameForm.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			if event.Key() == tcell.KeyEsc {
+				pages.HidePage("renameFolder")
+				app.SetFocus(tree)
+				return nil
+			}
+			return event
+		})
+
+		tipText := tview.NewTextView()
+		tipText.SetText("Tip: Press 'ESC' to close")
+		tipText.SetTextAlign(1)
+		tipText.SetBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
+		renameForm.SetButtonsAlign(1)
+		renameForm.SetBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
+		renameForm.SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen))
+		renameForm.SetTitleColor(tcell.ColorGreen)
+		renameForm.SetFieldBackgroundColor(tcell.Color(tcell.ColorValues[0x000000]))
+		renameForm.SetFieldTextColor(tcell.ColorGreen)
+		renameForm.SetButtonTextColor(tcell.ColorGreen)
+		renameForm.SetButtonBackgroundColor(tcell.ColorBlack)
+
+		renameFormLayout := tview.NewFlex().
+			SetDirection(tview.FlexRow).
+			AddItem(renameForm, 5, 1, true).
+			AddItem(tipText, 1, 0, false)
+
+		renameFormLayout.SetBorder(true).
+			SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen)).
+			SetTitle("Rename Folder").
+			SetTitleColor(tcell.ColorGreen)
+
+		renameFlex := tview.NewFlex().
+			AddItem(nil, 0, 1, false).
+			AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+				AddItem(nil, 0, 1, false).
+				AddItem(tview.NewFlex().
+					AddItem(nil, 0, 1, false).
+					AddItem(renameFormLayout, 70, 1, true).
+					AddItem(nil, 0, 1, false),
+					8, 1, true).
+				AddItem(nil, 0, 1, false),
+				0, 1, true).
+			AddItem(nil, 0, 1, false)
+
+		pages.AddPage("renameFolder", renameFlex, true, false)
+		pages.ShowPage("renameFolder")
+		app.SetFocus(renameForm.GetFormItem(0).(*tview.InputField))
+	}
+
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if _, isInputField := app.GetFocus().(*tview.InputField); isInputField {
 			return event
 		}
 		switch event.Rune() {
+		case 'r':
+			selectedNode := tree.GetCurrentNode()
+			if selectedNode != nil {
+				ref := selectedNode.GetReference()
+				if folder, ok := ref.(*models.FeedFolder); ok {
+					showRenameFolderModal(folder, selectedNode)
+					return nil
+				}
+			}
+			statusBar.SetText("No folder selected to rename")
+			resetStatusBarMsg(5)
+			return nil
 		case 'f':
 			pages.ShowPage("addFolder")
 			addFolderForm.GetFormItem(0).(*tview.InputField).SetText("")
