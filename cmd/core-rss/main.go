@@ -3,22 +3,16 @@ package main
 import (
 	"github.com/rzinak/core-rss/internal/models"
 	"github.com/rzinak/core-rss/internal/ui"
-	"github.com/rzinak/core-rss/pkg/utils"
+	// "github.com/rzinak/core-rss/pkg/utils"
 )
 
 func main() {
-	logger := utils.GetLogger()
-	defer logger.Close()
-
-	logger.Log("starting application...")
-
-	folder := &models.FeedFolder{
-		Name: "rzinwq",
+	folderData := &models.FolderData{
+		Folders: []models.FeedFolder{{
+			Name:  "Default",
+			Feeds: []*models.Feed{},
+		}},
 	}
 
-	err := ui.SetupUI(folder)
-
-	if err != nil {
-		logger.Log("ui error: %v", err)
-	}
+	ui.SetupUI(folderData)
 }

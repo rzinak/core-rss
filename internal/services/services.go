@@ -58,6 +58,41 @@ func LoadFeeds(folder *models.FeedFolder) error {
 	return nil
 }
 
+func LoadFolders() (*models.FolderData, error) {
+	file, err := os.Open("feeds.json")
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &models.FolderData{
+				Folders: []models.FeedFolder{{
+					Name:  "Default",
+					Feeds: []*models.Feed{},
+				}},
+			}, nil
+		}
+		return nil, err
+	}
+	defer file.Close()
+
+	var data models.FolderData
+	if err := json.NewDecoder(file).Decode(&data); err != nil {
+		return nil, err
+	}
+
+	return &data, nil
+}
+
+func SaveFolders(data *models.FolderData) error {
+	file, err := os.Create("feeds.json")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "    ")
+	return encoder.Encode(data)
+}
+
 func SaveFeeds(folder *models.FeedFolder) error {
 	var data struct {
 		Feeds []struct {

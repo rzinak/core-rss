@@ -31,3 +31,7 @@ type FeedData struct {
 		URL   string `json:"url"`
 	} `json:"feeds"`
 }
+
+type FolderData struct {
+	Folders []FeedFolder `json:"folders"`
+}

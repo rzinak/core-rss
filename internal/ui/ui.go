@@ -9,7 +9,7 @@ import (
 	"github.com/rivo/tview"
 	"github.com/rzinak/core-rss/internal/models"
 	"github.com/rzinak/core-rss/internal/services"
-	"github.com/rzinak/core-rss/pkg/utils"
+	// "github.com/rzinak/core-rss/pkg/utils"
 	"golang.org/x/net/html/charset"
 	"io"
 	"net/http"
@@ -31,13 +31,19 @@ func logToFile(message string) {
 	}
 }
 
-func SetupUI(folder *models.FeedFolder) *tview.Pages {
-	logger := utils.GetLogger()
-	defer logger.Close()
-
+func SetupUI(folderData *models.FolderData) *tview.Pages {
 	app := tview.NewApplication()
 
-	err := services.LoadFeeds(folder)
+	if len(folderData.Folders) == 0 {
+		folderData.Folders = append(folderData.Folders, models.FeedFolder{
+			Name:  "Default",
+			Feeds: []*models.Feed{},
+		})
+	}
+
+	defaultFolder := &folderData.Folders[0]
+
+	err := services.LoadFeeds(defaultFolder)
 	if err != nil {
 	}
 
@@ -63,7 +69,7 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 	contentView.SetTitleColor(tcell.ColorGreen)
 	contentView.SetTitle("Core RSS")
 
-	defaultStatusBarMsg := "?: help | q: quit | Tab: switch focus | j/k: navigate | a: add new feed | d: remove a feed"
+	defaultStatusBarMsg := "?: help | q: quit | Tab: switch focus | j/k: navigate | a: add new feed | d: remove a feed | f: add a folder"
 
 	statusBar := tview.NewTextView()
 	statusBar.SetTextAlign(tview.AlignLeft)
@@ -111,15 +117,24 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 	confirmModal.SetButtonTextColor(tcell.ColorGreen)
 	confirmModal.SetButtonBackgroundColor(tcell.ColorBlack)
 
-	folderNode := tview.NewTreeNode(folder.Name).SetReference(folder)
-	folderNode.SetColor(tcell.ColorGreen)
-	folderNode.SetTextStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.Color(tcell.ColorValues[0x000000])))
-	folderNode.SetSelectedTextStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorGreen))
+	for i := range folderData.Folders {
+		folder := &folderData.Folders[i]
+		folderNode := tview.NewTreeNode(folder.Name).SetReference(folder)
+		folderNode.SetColor(tcell.ColorGreen)
+		folderNode.SetTextStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.Color(tcell.ColorValues[0x000000])))
+		folderNode.SetSelectedTextStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorGreen))
 
-	folder.FolderNode = folderNode
-	root.AddChild(folderNode)
+		folder.FolderNode = folderNode
+		root.AddChild(folderNode)
 
-	services.LoadFeeds(folder)
+		for _, feed := range folder.Feeds {
+			feedNode := tview.NewTreeNode(feed.Title).SetReference(feed)
+			feedNode.SetColor(tcell.ColorGreen)
+			folderNode.AddChild(feedNode)
+		}
+	}
+
+	// services.LoadFeeds(folder)
 
 	resetStatusBarMsg := func(secondsToDisappear int) {
 		go func() {
@@ -214,17 +229,58 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 	})
 
 	addFeedForm := tview.NewForm()
-
 	addFeedForm.AddInputField("RSS Feed URL: ", "", 0, nil, nil)
 	addFeedForm.AddButton("Add", func() {
 		url := addFeedForm.GetFormItem(0).(*tview.InputField).GetText()
 		if url != "" {
-			_, message, err := services.AddFeedToFolder(folder, url)
-			if err != nil {
-				statusBar.SetText("Error: " + message)
-				resetStatusBarMsg(5)
+			selectedNode := tree.GetCurrentNode()
+			var targetFolder *models.FeedFolder
+
+			if selectedNode != nil {
+				ref := selectedNode.GetReference()
+				switch v := ref.(type) {
+				case *models.FeedFolder:
+					targetFolder = v
+				case *models.Feed:
+					// if a feed is selected, gotta search through folderData to find its parent folder
+					for i := range folderData.Folders {
+						folder := &folderData.Folders[i]
+						for _, feed := range folder.Feeds {
+							if feed == v {
+								targetFolder = folder
+								break
+							}
+						}
+						if targetFolder != nil {
+							break
+						}
+					}
+				}
+			}
+
+			// if no folder is found, gotta use the first folder
+			if targetFolder == nil && len(folderData.Folders) > 0 {
+				targetFolder = &folderData.Folders[0]
+			}
+
+			if targetFolder != nil {
+				feed, message, err := services.AddFeedToFolder(targetFolder, url)
+				if err != nil {
+					statusBar.SetText("Error: " + message)
+					resetStatusBarMsg(5)
+				} else {
+					// here i add the feed node to the UI
+					if targetFolder.FolderNode != nil {
+						feedNode := tview.NewTreeNode(feed.Title).SetReference(feed)
+						feedNode.SetColor(tcell.ColorGreen)
+						targetFolder.FolderNode.AddChild(feedNode)
+					}
+					services.SaveFolders(folderData)
+					statusBar.SetText(message)
+					resetStatusBarMsg(5)
+				}
 			} else {
-				statusBar.SetText(message)
+				statusBar.SetText("No folder available to add feed")
 				resetStatusBarMsg(5)
 			}
 		}
@@ -274,11 +330,140 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 		return event
 	})
 
+	addFolderForm := tview.NewForm()
+	addFolderForm.AddInputField("Folder Name: ", "", 0, nil, nil)
+	addFolderForm.AddButton("Add", func() {
+		folderName := addFolderForm.GetFormItem(0).(*tview.InputField).GetText()
+		if folderName != "" {
+			for _, folder := range folderData.Folders {
+				if folder.Name == folderName {
+					statusBar.SetText("Folder already exists!")
+					resetStatusBarMsg(5)
+					return
+				}
+			}
+
+			newFolder := models.FeedFolder{
+				Name:  folderName,
+				Feeds: []*models.Feed{},
+			}
+
+			folderData.Folders = append(folderData.Folders, newFolder)
+
+			newFolderNode := tview.NewTreeNode(folderName).SetReference(&newFolder)
+			newFolderNode.SetColor(tcell.ColorGreen)
+			newFolderNode.SetTextStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.Color(tcell.ColorValues[0x000000])))
+			newFolderNode.SetSelectedTextStyle(tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorGreen))
+			root.AddChild(newFolderNode)
+
+			services.SaveFolders(folderData)
+			statusBar.SetText(fmt.Sprintf("Folder '%s' created successfully!", folderName))
+			resetStatusBarMsg(5)
+		}
+		pages.HidePage("addFolder")
+		app.SetFocus(tree)
+	})
+
+	folderFormLayout := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(addFolderForm, 0, 1, true).
+		AddItem(tview.NewTextView().SetText("Tip: Press 'ESC' to close").SetTextAlign(1), 1, 0, false)
+
+	folderFormLayout.SetBorder(true).
+		SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen)).
+		SetTitle("Add a new folder").
+		SetTitleColor(tcell.ColorGreen)
+
+	folderFlex := tview.NewFlex()
+	folderFlex.SetDirection(tview.FlexRow)
+	folderFlex.AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().
+			AddItem(nil, 0, 1, false).
+			AddItem(folderFormLayout, 70, 1, true).
+			AddItem(nil, 0, 1, false), 0, 1, true).
+		AddItem(nil, 0, 1, false)
+
+	pages.AddPage("addFolder", folderFlex, true, false)
+
+	addFeedForm.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEsc {
+			pages.HidePage("addFeed")
+			app.SetFocus(tree)
+			return nil
+		}
+		return event
+	})
+
+	addFeedForm.GetButton(0).SetSelectedFunc(func() {
+		url := addFeedForm.GetFormItem(0).(*tview.InputField).GetText()
+		if url == "" {
+			return
+		}
+
+		selectedNode := tree.GetCurrentNode()
+		var targetFolder *models.FeedFolder
+
+		// here i determine target folder based on selection
+		if selectedNode != nil {
+			ref := selectedNode.GetReference()
+			switch v := ref.(type) {
+			case *models.FeedFolder:
+				targetFolder = v
+			case *models.Feed:
+				// if a feed is selected, will use the root's first child (folder)
+				if len(root.GetChildren()) > 0 {
+					if folder, ok := root.GetChildren()[0].GetReference().(*models.FeedFolder); ok {
+						targetFolder = folder
+					}
+				}
+			}
+		}
+
+		// if no folder is selected/found, use the first available folder
+		if targetFolder == nil && len(folderData.Folders) > 0 {
+			targetFolder = &folderData.Folders[0]
+		}
+
+		if targetFolder == nil {
+			statusBar.SetText("No folder available to add feed")
+			resetStatusBarMsg(5)
+			return
+		}
+
+		// here we feed to selected folder
+		feed, message, err := services.AddFeedToFolder(targetFolder, url)
+		if err != nil {
+			statusBar.SetText("Error: " + message)
+			resetStatusBarMsg(5)
+		} else {
+			// find the folder node and add the feed
+			for _, node := range root.GetChildren() {
+				if folder, ok := node.GetReference().(*models.FeedFolder); ok {
+					if folder == targetFolder {
+						feedNode := tview.NewTreeNode(feed.Title).SetReference(feed)
+						feedNode.SetColor(tcell.ColorGreen)
+						node.AddChild(feedNode)
+						break
+					}
+				}
+			}
+			statusBar.SetText(message)
+			resetStatusBarMsg(5)
+		}
+		pages.HidePage("addFeed")
+		app.SetFocus(tree)
+	})
+
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if _, isInputField := app.GetFocus().(*tview.InputField); isInputField {
 			return event
 		}
 		switch event.Rune() {
+		case 'f':
+			pages.ShowPage("addFolder")
+			addFolderForm.GetFormItem(0).(*tview.InputField).SetText("")
+			app.SetFocus(addFolderForm)
+			return nil
 		case 'a':
 			pages.ShowPage("addFeed")
 			addFeedForm.GetFormItem(0).(*tview.InputField).SetText("")
@@ -298,20 +483,31 @@ func SetupUI(folder *models.FeedFolder) *tview.Pages {
 					confirmModal.SetText(fmt.Sprintf("Are you sure you want to remove the feed '%s'?", feed.Title))
 					confirmModal.SetDoneFunc(func(buttonIndex int, buttonLabel string) {
 						if buttonLabel == "Yes" {
-							for i, f := range folder.Feeds {
-								if f == feed {
-									folder.Feeds = append(folder.Feeds[:i], folder.Feeds[i+1:]...)
+							//here i find the folder containing this feed
+							var targetFolder *models.FeedFolder
+							for i := range folderData.Folders {
+								folder := &folderData.Folders[i]
+								for j, f := range folder.Feeds {
+									if f == feed {
+										folder.Feeds = append(folder.Feeds[:j], folder.Feeds[j+1:]...)
+										targetFolder = folder
+										break
+									}
+								}
+								if targetFolder != nil {
 									break
 								}
 							}
-							folderNode.RemoveChild(selectedNode)
-							services.SaveFeeds(folder)
-							statusBar.SetText(fmt.Sprintf("Feed '%s' removed.", feed.Title))
-							contentView.Clear()
+
+							if targetFolder != nil && targetFolder.FolderNode != nil {
+								targetFolder.FolderNode.RemoveChild(selectedNode)
+								services.SaveFolders(folderData)
+								statusBar.SetText(fmt.Sprintf("Feed '%s' removed.", feed.Title))
+								contentView.Clear()
+							}
 						}
 						pages.RemovePage("confirmRemove")
 						app.SetFocus(tree)
-
 						resetStatusBarMsg(5)
 					})
 					pages.AddPage("confirmRemove", confirmModal, true, true)
