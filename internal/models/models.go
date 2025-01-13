@@ -14,15 +14,15 @@ type Item struct {
 }
 
 type Feed struct {
-	Title string `xml:"channel>title"`
-	URL   string
-	Items []Item `xml:"channel>item"`
+	Title string `xml:"channel>title" json:"title"`
+	URL   string `json:"url"`
+	Items []Item `xml:"channel>item" json:"-"`
 }
 
 type FeedFolder struct {
-	Name       string
-	Feeds      []*Feed
-	FolderNode *tview.TreeNode
+	Name       string          `json:"name"`
+	Feeds      []*Feed         `json:"feeds"`
+	FolderNode *tview.TreeNode `json:"-"`
 }
 
 type FeedData struct {

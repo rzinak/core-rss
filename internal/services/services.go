@@ -75,7 +75,30 @@ func LoadFolders() (*models.FolderData, error) {
 
 	var data models.FolderData
 	if err := json.NewDecoder(file).Decode(&data); err != nil {
-		return nil, err
+		// if theres an error decoding the new format, fallback to the old format
+		file.Seek(0, 0) // reset file pointer
+		var oldData struct {
+			Feeds []struct {
+				Title string `jsokn:"title"`
+				URL   string `json:"url"`
+			} `json:"feeds"`
+		}
+		if err := json.NewDecoder(file).Decode(&oldData); err != nil {
+			return nil, err
+		}
+
+		// convert old format to new format
+		data.Folders = []models.FeedFolder{{
+			Name:  "Default",
+			Feeds: make([]*models.Feed, len(oldData.Feeds)),
+		}}
+
+		for i, f := range oldData.Feeds {
+			data.Folders[0].Feeds[i] = &models.Feed{
+				Title: f.Title,
+				URL:   f.URL,
+			}
+		}
 	}
 
 	return &data, nil
@@ -93,34 +116,27 @@ func SaveFolders(data *models.FolderData) error {
 	return encoder.Encode(data)
 }
 
+// now that i have the saveFolder func, this becomes deprecated
 func SaveFeeds(folder *models.FeedFolder) error {
-	var data struct {
-		Feeds []struct {
-			Title string `json:"title"`
-			URL   string `json:"url"`
-		} `json:"feeds"`
-	}
-	data.Feeds = make([]struct {
-		Title string `json:"title"`
-		URL   string `json:"url"`
-	}, len(folder.Feeds))
-	for i, feed := range folder.Feeds {
-		data.Feeds[i] = struct {
-			Title string `json:"title"`
-			URL   string `json:"url"`
-		}{
-			Title: feed.Title,
-			URL:   feed.URL,
-		}
-	}
-	file, err := os.Create("feeds.json")
+	data, err := LoadFolders()
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "    ")
-	return encoder.Encode(&data)
+
+	found := false
+	for i, f := range data.Folders {
+		if f.Name == folder.Name {
+			data.Folders[i].Feeds = folder.Feeds
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		data.Folders = append(data.Folders, *folder)
+	}
+
+	return SaveFolders(data)
 }
 
 func AddFeedToFolder(folder *models.FeedFolder, feedUrl string) (*models.Feed, string, error) {
@@ -137,23 +153,33 @@ func AddFeedToFolder(folder *models.FeedFolder, feedUrl string) (*models.Feed, s
 	defer resp.Body.Close()
 
 	decoder := xml.NewDecoder(resp.Body)
-
 	decoder.CharsetReader = func(charsetLabel string, input io.Reader) (io.Reader, error) {
 		return charset.NewReaderLabel(charsetLabel, input)
 	}
 
 	var feed models.Feed
-
-	logToFile(fmt.Sprintf("AddFeedToFolder | feed title: %s", feed.Title))
 	err = decoder.Decode(&feed)
 	if err != nil {
-		logToFile(fmt.Sprintf("error parsing:"))
-		logToFile(fmt.Sprintf("%v", err))
+		logToFile(fmt.Sprintf("error parsing: %v", err))
 		return nil, "Failed to parse RSS feed", err
 	}
+
 	feed.URL = feedUrl
 	folder.Feeds = append(folder.Feeds, &feed)
-	err = SaveFeeds(folder)
+
+	data, err := LoadFolders()
+	if err != nil {
+		return nil, "Failed to load folders", err
+	}
+
+	for i := range data.Folders {
+		if data.Folders[i].Name == folder.Name {
+			data.Folders[i].Feeds = folder.Feeds
+			break
+		}
+	}
+
+	err = SaveFolders(data)
 	if err != nil {
 		return nil, "Failed to save feed", err
 	}
