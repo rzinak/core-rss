@@ -116,29 +116,6 @@ func SaveFolders(data *models.FolderData) error {
 	return encoder.Encode(data)
 }
 
-// now that i have the saveFolder func, this becomes deprecated
-// func SaveFeeds(folder *models.FeedFolder) error {
-// 	data, err := LoadFolders()
-// 	if err != nil {
-// 		return err
-// 	}
-//
-// 	found := false
-// 	for i, f := range data.Folders {
-// 		if f.Name == folder.Name {
-// 			data.Folders[i].Feeds = folder.Feeds
-// 			found = true
-// 			break
-// 		}
-// 	}
-//
-// 	if !found {
-// 		data.Folders = append(data.Folders, *folder)
-// 	}
-//
-// 	return SaveFolders(data)
-// }
-
 func AddFeedToFolder(folder *models.FeedFolder, feedUrl string) (*models.Feed, string, error) {
 	for _, existingFeed := range folder.Feeds {
 		if existingFeed.URL == feedUrl {
