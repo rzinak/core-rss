@@ -79,7 +79,7 @@ func LoadFolders() (*models.FolderData, error) {
 		file.Seek(0, 0) // reset file pointer
 		var oldData struct {
 			Feeds []struct {
-				Title string `jsokn:"title"`
+				Title string `json:"title"`
 				URL   string `json:"url"`
 			} `json:"feeds"`
 		}
@@ -117,27 +117,27 @@ func SaveFolders(data *models.FolderData) error {
 }
 
 // now that i have the saveFolder func, this becomes deprecated
-func SaveFeeds(folder *models.FeedFolder) error {
-	data, err := LoadFolders()
-	if err != nil {
-		return err
-	}
-
-	found := false
-	for i, f := range data.Folders {
-		if f.Name == folder.Name {
-			data.Folders[i].Feeds = folder.Feeds
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		data.Folders = append(data.Folders, *folder)
-	}
-
-	return SaveFolders(data)
-}
+// func SaveFeeds(folder *models.FeedFolder) error {
+// 	data, err := LoadFolders()
+// 	if err != nil {
+// 		return err
+// 	}
+//
+// 	found := false
+// 	for i, f := range data.Folders {
+// 		if f.Name == folder.Name {
+// 			data.Folders[i].Feeds = folder.Feeds
+// 			found = true
+// 			break
+// 		}
+// 	}
+//
+// 	if !found {
+// 		data.Folders = append(data.Folders, *folder)
+// 	}
+//
+// 	return SaveFolders(data)
+// }
 
 func AddFeedToFolder(folder *models.FeedFolder, feedUrl string) (*models.Feed, string, error) {
 	for _, existingFeed := range folder.Feeds {

@@ -41,11 +41,11 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 		})
 	}
 
-	defaultFolder := &folderData.Folders[0]
-
-	err := services.LoadFeeds(defaultFolder)
-	if err != nil {
-	}
+	// defaultFolder := &folderData.Folders[0]
+	//
+	// err := services.LoadFeeds(defaultFolder)
+	// if err != nil {
+	// }
 
 	root := tview.NewTreeNode("Feeds").SetColor(tcell.ColorGreen)
 	root.SetTextStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.Color(tcell.ColorValues[0x000000])))
