@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 )
 
 func logToFile(message string) {
@@ -59,7 +60,16 @@ func LoadFeeds(folder *models.FeedFolder) error {
 }
 
 func LoadFolders() (*models.FolderData, error) {
-	file, err := os.Open("feeds.json")
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return nil, err
+	}
+
+	appDir := filepath.Join(configDir, "core-rss")
+	filePath := filepath.Join(appDir, "feeds.json")
+
+	file, err := os.Open(filePath)
+
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &models.FolderData{
@@ -105,7 +115,18 @@ func LoadFolders() (*models.FolderData, error) {
 }
 
 func SaveFolders(data *models.FolderData) error {
-	file, err := os.Create("feeds.json")
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return err
+	}
+
+	appDir := filepath.Join(configDir, "core-rss")
+	if err := os.MkdirAll(appDir, 0755); err != nil {
+		return err
+	}
+
+	filePath := filepath.Join(appDir, "feeds.json")
+	file, err := os.Create(filePath)
 	if err != nil {
 		return err
 	}

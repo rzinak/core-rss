@@ -13,7 +13,9 @@ import (
 	"golang.org/x/net/html/charset"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"time"
 )
 
@@ -40,12 +42,6 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 			Feeds: []*models.Feed{},
 		})
 	}
-
-	// defaultFolder := &folderData.Folders[0]
-	//
-	// err := services.LoadFeeds(defaultFolder)
-	// if err != nil {
-	// }
 
 	root := tview.NewTreeNode("Feeds").SetColor(tcell.ColorGreen)
 	root.SetTextStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen).Background(tcell.Color(tcell.ColorValues[0x000000])))
@@ -143,11 +139,13 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 		}()
 	}
 
+	var currentItem *models.Item
+
 	tree.SetSelectedFunc(func(node *tview.TreeNode) {
 		reference := node.GetReference()
 		switch v := reference.(type) {
 		case models.Item:
-			// handle item selection
+			currentItem = &v
 			var content string
 			var err error
 			if v.Content != "" {
@@ -364,6 +362,9 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 		pages.HidePage("addFolder")
 		app.SetFocus(tree)
 	})
+	addFolderForm.SetButtonsAlign(1)
+	addFolderForm.SetButtonTextColor(tcell.ColorGreen)
+	addFolderForm.SetButtonBackgroundColor(tcell.ColorBlack)
 
 	folderFormTipText := tview.NewTextView()
 	folderFormTipText.SetText("Tip: Press 'ESC' to close")
@@ -372,7 +373,7 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 
 	folderFormLayout := tview.NewFlex().
 		SetDirection(tview.FlexRow).
-		AddItem(addFolderForm, 3, 1, true).
+		AddItem(addFolderForm, 5, 1, true).
 		AddItem(folderFormTipText, 1, 0, false)
 	folderFormLayout.SetBorder(true).
 		SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen)).
@@ -387,7 +388,7 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 				AddItem(nil, 0, 1, false).
 				AddItem(folderFormLayout, 70, 1, true).
 				AddItem(nil, 0, 1, false),
-				6, 1, true).
+				8, 1, true).
 			AddItem(nil, 0, 1, false),
 			0, 1, true).
 		AddItem(nil, 0, 1, false)
@@ -637,7 +638,41 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 		app.SetFocus(appFlex)
 	})
 
+	openURL := func(rawUrl string) error {
+		parsedURL, err := url.Parse(rawUrl)
+		if err != nil {
+			return err
+		}
+
+		if parsedURL.Scheme == "" {
+			parsedURL.Scheme = "http"
+		}
+
+		cmd := exec.Command("xdg-open", parsedURL.String())
+		// cmd := exec.Command("open", parsedURL.String()) // for mac os i think i gotta use this
+		// cmd := exec.Command("rundll32", "url.dll,FileProtocolHandler", parsedURL.String()) // and this one for windows
+
+		return cmd.Start()
+
+	}
+
 	contentView.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyCtrlO {
+			if currentItem != nil && currentItem.Link != "" {
+				err := openURL(currentItem.Link)
+				if err != nil {
+					statusBar.SetText("Error opening URL: " + err.Error())
+					resetStatusBarMsg(5)
+				} else {
+					statusBar.SetText("Opening URL in browser...")
+					resetStatusBarMsg(5)
+				}
+			} else {
+				statusBar.SetText("No URL available to open")
+				resetStatusBarMsg(5)
+			}
+			return nil
+		}
 		switch event.Rune() {
 		case 'j':
 			row, _ := contentView.GetScrollOffset()
