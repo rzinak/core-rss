@@ -65,7 +65,7 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 	contentView.SetTitleColor(tcell.ColorGreen)
 	contentView.SetTitle("Core RSS")
 
-	defaultStatusBarMsg := "?: help | q: quit | Tab: switch focus | j/k: navigate | a: add new feed | d: remove a feed | f: add a folder | r: rename a folder"
+	defaultStatusBarMsg := "?: help | q: quit | Tab: switch focus | j/k: navigate | a: add new feed | d: remove a feed | f: add a folder | r: rename a folder | To see more, press '?'"
 
 	statusBar := tview.NewTextView()
 	statusBar.SetTextAlign(tview.AlignLeft)
@@ -90,7 +90,14 @@ func SetupUI(folderData *models.FolderData) *tview.Pages {
 	appFlex.AddItem(statusBar, 1, 1, false)
 
 	helpModal := tview.NewModal()
-	helpModal.SetText("Press 'q' to quit\nPress 'Tab' to switch focus inside the application\nNavigate using j/k\nPress 'Enter' to close this help (when focused)\nPress 'a' to add a new feed\nPress 'f' to add a folder\nPress 'r' to rename a folder")
+	helpModal.SetText(`Press 'q' to quit
+		Press 'Tab' to switch focus inside the application
+		Navigate using j/k
+		Press 'Enter' to close this help (when focused)
+		Press 'a' to add a new feed
+		Press 'f' to add a folder
+		Press 'r' to rename a folder
+		Press 'Ctrl + O' to open the current post in the browser`)
 	helpModal.AddButtons([]string{"Close"})
 	helpModal.SetBorder(true)
 	helpModal.SetBorderStyle(tcell.StyleDefault.Foreground(tcell.ColorGreen))
