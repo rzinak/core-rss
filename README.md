@@ -2,9 +2,9 @@
 
 # Core RSS
 
-</div>
-
 A terminal-based RSS feed reader.
+
+</div>
 
 ## Installation
 
