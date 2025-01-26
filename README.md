@@ -4,6 +4,8 @@
 
 A terminal-based RSS feed reader.
 
+![Core RSS Example](core-rss.png)
+
 </div>
 
 ## Installation
